@@ -1,0 +1,6 @@
+{
+    "name": "makehaven/quiz_notifications",
+    "type": "drupal-custom-module",
+    "description": "Allows config of email notices for quizes",
+    "license": "GPL-2.0-or-later"
+}
