@@ -72,6 +72,16 @@ function quiz_notifications_entity_create(EntityInterface $entity) {
     $subject_raw = $rule['subject'] ?? '';
     $body_raw = $rule['body'] ?? '';
 
+    // If subject or body are empty, log an error and skip this rule.
+    // This prevents errors from mail systems and accounts for invalid config.
+    if (empty($subject_raw) || empty($body_raw)) {
+      \Drupal::logger('quiz_notifications')->warning(
+        'A matching notification rule for quiz @qid was found, but the subject or body was empty. Skipping notification.',
+        ['@qid' => $completed_quiz_id]
+      );
+      continue;
+    }
+
     $subject = $token->replace($subject_raw, $token_data);
     $body = $token->replace($body_raw, $token_data);
 
