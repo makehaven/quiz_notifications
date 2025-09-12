@@ -1,52 +1,63 @@
 <?php
 
 use Drupal\Core\Entity\EntityInterface;
-use Drupal\Core\Mail\MailManagerInterface;
 use Drupal\Core\Render\Markup;
 
 /**
- * Implements hook_entity_create().
+ * Implements hook_mail().
+ * Supplies subject/body from $params.
  */
-function quiz_notifications_entity_create(EntityInterface $entity) {
-  // Only handle quiz results.
+function quiz_notifications_mail($key, &$message, $params) {
+  if ($key === 'quiz_pass') {
+    $message['subject'] = $params['subject'] ?? 'Quiz notification';
+    $message['headers']['Content-Type'] = 'text/html; charset=UTF-8';
+    $message['body'][] = (string) ($params['message'] ?? '');
+  }
+}
+
+/**
+ * Implements hook_entity_insert().
+ * Fires on first save of a quiz result.
+ */
+function quiz_notifications_entity_insert(EntityInterface $entity) {
+  // Only act on quiz results.
   if ($entity->getEntityTypeId() !== 'quiz_result') {
     return;
   }
 
-  // We only care about 100% scores.
-  if (method_exists($entity, 'getScore') && $entity->getScore() != 100) {
+  // Require 100% score (adjust if needed).
+  if (method_exists($entity, 'getScore') && method_exists($entity, 'getMaxScore')) {
+    $score = (int) $entity->getScore();
+    $max   = (int) $entity->getMaxScore();
+    if ($max <= 0 || $score < $max) {
+      \Drupal::logger('quiz_notifications')->notice('Quiz result not 100%; skipping. Score @s/@m.', ['@s' => $score, '@m' => $max]);
+      return;
+    }
+  }
+
+  // Must have quiz and user.
+  if (!method_exists($entity, 'getQuiz') || !method_exists($entity, 'getUser')) {
+    \Drupal::logger('quiz_notifications')->error('quiz_result missing getQuiz()/getUser().');
     return;
   }
 
-  // Defensive: make sure we can get the quiz and user.
-  if (!method_exists($entity, 'getQuiz') || !method_exists($entity, 'getOwner')) {
-    \Drupal::logger('quiz_notifications')->error('quiz_result entity missing expected methods.');
-    return;
-  }
-
-  // Identify the completed quiz and user.
   $quiz = $entity->getQuiz();
-  $user = $entity->getOwner();
-
+  $user = $entity->getUser();
   if (!$quiz || !$user) {
     \Drupal::logger('quiz_notifications')->warning('Missing quiz or user on quiz_result insert.');
     return;
   }
 
   $completed_quiz_id = (int) $quiz->id();
-  $account = $user; // AccountInterface expected.
-
-  // Load configured rules.
   $config = \Drupal::config('quiz_notifications.settings');
   $rules = $config->get('rules') ?: [];
 
-  // Nothing configured? Log and exit.
   if (empty($rules)) {
     \Drupal::logger('quiz_notifications')->notice('No rules configured. Skipping.');
     return;
   }
 
-  // Find matching rules by quiz_id.
+  // Match by quiz_id (as saved by Settings form).
   $matched = array_filter($rules, static function ($rule) use ($completed_quiz_id) {
     return !empty($rule['quiz_id']) && (int) $rule['quiz_id'] === $completed_quiz_id;
   });
@@ -56,63 +67,42 @@ function quiz_notifications_entity_create(EntityInterface $entity) {
     return;
   }
 
-  // Build token context (user + quiz).
   $token = \Drupal::token();
-  $token_data = [
-    'user' => $account,
-    'quiz' => $quiz,
-    // If your existing email templates used node tokens, uncomment next line:
-    // 'node' => $quiz,
-  ];
+  $token_data = ['user' => $user, 'quiz' => $quiz];
 
   /** @var \Drupal\Core\Mail\MailManagerInterface $mailManager */
   $mailManager = \Drupal::service('plugin.manager.mail');
 
   foreach ($matched as $rule) {
     $subject_raw = $rule['subject'] ?? '';
-    $body_raw = $rule['body'] ?? '';
+    $body_raw    = $rule['body'] ?? '';
 
-    // If subject or body are empty, log an error and skip this rule.
-    // This prevents errors from mail systems and accounts for invalid config.
-    if (empty($subject_raw) || empty($body_raw)) {
-      \Drupal::logger('quiz_notifications')->warning(
-        'A matching notification rule for quiz @qid was found, but the subject or body was empty. Skipping notification.',
-        ['@qid' => $completed_quiz_id]
-      );
+    if ($subject_raw === '' || $body_raw === '') {
+      \Drupal::logger('quiz_notifications')->warning('Rule for quiz @qid has empty subject/body.', ['@qid' => $completed_quiz_id]);
       continue;
     }
 
     $subject = $token->replace($subject_raw, $token_data);
-    $body = $token->replace($body_raw, $token_data);
+    $body    = $token->replace($body_raw, $token_data);
 
-    $to = $account->getEmail();
-    if (empty($to)) {
-      \Drupal::logger('quiz_notifications')->warning('User @uid has no email; cannot send quiz notification.', [
-        '@uid' => $account->id(),
-      ]);
+    $to = $user->getEmail();
+    if (!$to) {
+      \Drupal::logger('quiz_notifications')->warning('User @uid has no email; cannot send.', ['@uid' => $user->id()]);
       continue;
     }
 
-    $params = [
-      'subject' => $subject,
-      'message' => $body,
-    ];
-
-    $langcode = $account->getPreferredLangcode();
-    $send = TRUE;
-
-    $result = $mailManager->mail('quiz_notifications', 'quiz_pass', $to, $langcode, $params, NULL, $send);
+    $params = ['subject' => $subject, 'message' => Markup::create($body)];
+    $langcode = $user->getPreferredLangcode();
+    $result = $mailManager->mail('quiz_notifications', 'quiz_pass', $to, $langcode, $params, NULL, TRUE);
 
     if (!empty($result['result'])) {
-      \Drupal::logger('quiz_notifications')->notice(
-        'Sent quiz notification to @mail for quiz @qid (user @uid).',
-        ['@mail' => $to, '@qid' => $completed_quiz_id, '@uid' => $account->id()]
-      );
+      \Drupal::logger('quiz_notifications')->notice('Sent quiz notification to @mail for quiz @qid (user @uid).', [
+        '@mail' => $to, '@qid' => $completed_quiz_id, '@uid' => $user->id(),
+      ]);
     } else {
-      \Drupal::logger('quiz_notifications')->error(
-        'Failed sending quiz notification to @mail for quiz @qid (user @uid).',
-        ['@mail' => $to, '@qid' => $completed_quiz_id, '@uid' => $account->id()]
-      );
+      \Drupal::logger('quiz_notifications')->error('Failed sending quiz notification to @mail for quiz @qid (user @uid).', [
+        '@mail' => $to, '@qid' => $completed_quiz_id, '@uid' => $user->id(),
+      ]);
     }
   }
 }
