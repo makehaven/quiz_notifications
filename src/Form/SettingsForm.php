@@ -26,7 +26,16 @@ class SettingsForm extends ConfigFormBase {
    */
   public function buildForm(array $form, FormStateInterface $form_state) {
     $config = $this->config('quiz_notifications.settings');
-    $rules = $config->get('rules') ?? [];
+
+    // Use the form state for rules if it's been set (e.g., by an AJAX operation).
+    // Otherwise, load from config. This makes AJAX operations like add/remove reliable.
+    if ($form_state->isRebuilding()) {
+      $rules = $form_state->get('rules');
+    }
+    else {
+      $rules = $config->get('rules') ?? [];
+      $form_state->set('rules', $rules);
+    }
 
     $form['#tree'] = TRUE;
     $form['rules'] = [
@@ -36,14 +45,13 @@ class SettingsForm extends ConfigFormBase {
       '#suffix' => '</div>',
     ];
 
-    $rule_count = $form_state->get('rule_count');
-    if ($rule_count === NULL) {
-      $rule_count = count($rules) > 0 ? count($rules) : 1;
-      $form_state->set('rule_count', $rule_count);
+    // If there are no rules, start with one empty one.
+    if (empty($rules)) {
+      $rules = [[]];
+      $form_state->set('rules', $rules);
     }
 
-    for ($i = 0; $i < $rule_count; $i++) {
-      $rule = $rules[$i] ?? [];
+    foreach ($rules as $i => $rule) {
       $form['rules'][$i] = [
         '#type' => 'details',
         '#title' => $this->t('Rule #@num', ['@num' => $i + 1]),
@@ -65,12 +73,23 @@ class SettingsForm extends ConfigFormBase {
         '#title' => $this->t('Email Subject'),
         '#default_value' => $rule['subject'] ?? '',
         '#maxlength' => 255,
+        '#required' => TRUE,
       ];
       $form['rules'][$i]['body'] = [
-        '#type' => 'text_format',
+        '#type' => 'textarea',
         '#title' => $this->t('Email Body'),
-        '#format' => $rule['body']['format'] ?? 'basic_html',
-        '#default_value' => $rule['body']['value'] ?? '',
+        '#default_value' => isset($rule['body']) && is_array($rule['body']) ? $rule['body']['value'] : ($rule['body'] ?? ''),
+        '#required' => TRUE,
+      ];
+      $form['rules'][$i]['remove_rule'] = [
+        '#type' => 'submit',
+        '#value' => $this->t('Remove rule #@num', ['@num' => $i + 1]),
+        '#submit' => ['::removeRule'],
+        '#ajax' => [
+          'callback' => '::ajaxCallback',
+          'wrapper' => 'rules-wrapper',
+        ],
+        '#name' => 'remove_rule_' . $i,
       ];
     }
 
@@ -108,8 +127,26 @@ class SettingsForm extends ConfigFormBase {
    * Submit handler for the "Add Rule" button.
    */
   public function addRule(array &$form, FormStateInterface $form_state) {
-    $rule_count = $form_state->get('rule_count');
-    $form_state->set('rule_count', $rule_count + 1);
+    // Add a new empty rule to the form state and rebuild.
+    $rules = $form_state->get('rules');
+    $rules[] = [];
+    $form_state->set('rules', $rules);
+    $form_state->setRebuild();
+  }
+
+  /**
+   * Submit handler for the "Remove Rule" button.
+   */
+  public function removeRule(array &$form, FormStateInterface $form_state) {
+    // Get the index of the rule to remove from the button name.
+    $triggering_element = $form_state->getTriggeringElement();
+    $rule_index = $triggering_element['#parents'][1];
+
+    // Remove the rule from the form state and rebuild.
+    $rules = $form_state->get('rules');
+    unset($rules[$rule_index]);
+    $form_state->set('rules', array_values($rules)); // Re-index the array.
+
     $form_state->setRebuild();
   }
 
@@ -118,16 +155,17 @@ class SettingsForm extends ConfigFormBase {
    * {@inheritdoc}
    */
   public function submitForm(array &$form, FormStateInterface $form_state) {
-    $values = $form_state->getValue('rules');
-    // Filter out empty rules before saving.
-    $filtered_rules = array_filter($values, function($rule) {
-      return !empty($rule['quiz_id']);
+    $rules = $form_state->getValue('rules');
+
+    // Filter out any rules where the quiz_id is not set.
+    $valid_rules = array_filter($rules, function ($rule) {
+        return !empty($rule['quiz_id']);
     });
     
-
     $this->config('quiz_notifications.settings')
-      ->set('rules', array_values($filtered_rules)) // Re-index the array.
+      ->set('rules', array_values($valid_rules)) // Re-index after filtering.
       ->save();
+
     parent::submitForm($form, $form_state);
   }
 }
