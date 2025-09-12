@@ -36,13 +36,13 @@ function quiz_notifications_entity_insert(EntityInterface $entity) {
   }
 
   // Must have quiz and user.
-  if (!method_exists($entity, 'getQuiz') || !method_exists($entity, 'getUser')) {
-    \Drupal::logger('quiz_notifications')->error('quiz_result missing getQuiz()/getUser().');
+  if (!method_exists($entity, 'getQuiz') || !method_exists($entity, 'getOwner')) {
+    \Drupal::logger('quiz_notifications')->error('quiz_result missing getQuiz()/getOwner().');
     return;
   }
 
   $quiz = $entity->getQuiz();
-  $user = $entity->getUser();
+  $user = $entity->getOwner();
   if (!$quiz || !$user) {
     \Drupal::logger('quiz_notifications')->warning('Missing quiz or user on quiz_result insert.');
     return;
