@@ -1,0 +1,7 @@
+name: Quiz Notifications
+type: module
+description: 'Provides a configuration page to send custom emails when quizzes are passed with 100%.'
+core_version_requirement: ^10 || ^11
+dependencies:
+  - drupal:quiz
+  - drupal:token

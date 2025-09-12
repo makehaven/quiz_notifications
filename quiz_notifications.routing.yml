@@ -1,0 +1,7 @@
+quiz_notifications.settings_form:
+  path: '/admin/config/media/quiz_notifications'
+  defaults:
+    _form: '\Drupal\quiz_notifications\Form\SettingsForm'
+    _title: 'Quiz Notifications Settings'
+  requirements:
+    _permission: 'administer site configuration'

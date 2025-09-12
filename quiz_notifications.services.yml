@@ -1,0 +1,6 @@
+services:
+  quiz_notifications.quiz_result_subscriber:
+    class: Drupal\quiz_notifications\EventSubscriber\QuizResultSubscriber
+    arguments: ['@config.factory', '@plugin.manager.mail', '@token']
+    tags:
+      - { name: event_subscriber }

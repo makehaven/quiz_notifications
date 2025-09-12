@@ -1,0 +1,106 @@
+<?php
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Mail\MailManagerInterface;
+use Drupal\Core\Render\Markup;
+
+/**
+ * Implements hook_entity_insert().
+ *
+ * Fires when a quiz result is saved for the first time.
+ */
+function quiz_notifications_entity_insert(EntityInterface $entity) {
+  // Only handle quiz results.
+  if ($entity->getEntityTypeId() !== 'quiz_result') {
+    return;
+  }
+
+  // Defensive: make sure we can get the quiz and user.
+  if (!method_exists($entity, 'getQuiz') || !method_exists($entity, 'getUser')) {
+    \Drupal::logger('quiz_notifications')->error('quiz_result entity missing expected methods.');
+    return;
+  }
+
+  // Identify the completed quiz and user.
+  $quiz = $entity->getQuiz();
+  $user = $entity->getUser();
+
+  if (!$quiz || !$user) {
+    \Drupal::logger('quiz_notifications')->warning('Missing quiz or user on quiz_result insert.');
+    return;
+  }
+
+  $completed_quiz_id = (int) $quiz->id();
+  $account = $user; // AccountInterface expected.
+
+  // Load configured rules.
+  $config = \Drupal::config('quiz_notifications.settings');
+  $rules = $config->get('rules') ?: [];
+
+  // Nothing configured? Log and exit.
+  if (empty($rules)) {
+    \Drupal::logger('quiz_notifications')->notice('No rules configured. Skipping.');
+    return;
+  }
+
+  // Find matching rules by quiz_id.
+  $matched = array_filter($rules, static function ($rule) use ($completed_quiz_id) {
+    return !empty($rule['quiz_id']) && (int) $rule['quiz_id'] === $completed_quiz_id;
+  });
+
+  if (empty($matched)) {
+    \Drupal::logger('quiz_notifications')->notice('No matching rule for quiz @qid.', ['@qid' => $completed_quiz_id]);
+    return;
+  }
+
+  // Build token context (user + quiz).
+  $token = \Drupal::token();
+  $token_data = [
+    'user' => $account,
+    'quiz' => $quiz,
+    // If your existing email templates used node tokens, uncomment next line:
+    // 'node' => $quiz,
+  ];
+
+  /** @var \Drupal\Core\Mail\MailManagerInterface $mailManager */
+  $mailManager = \Drupal::service('plugin.manager.mail');
+
+  foreach ($matched as $rule) {
+    $subject_raw = $rule['subject'] ?? '';
+    $body_raw = $rule['body']['value'] ?? '';
+
+    $subject = $token->replace($subject_raw, $token_data);
+    $body = $token->replace($body_raw, $token_data);
+
+    $to = $account->getEmail();
+    if (empty($to)) {
+      \Drupal::logger('quiz_notifications')->warning('User @uid has no email; cannot send quiz notification.', [
+        '@uid' => $account->id(),
+      ]);
+      continue;
+    }
+
+    $params = [
+      'subject' => $subject,
+      // Allow simple HTML (same as most Drupal mails).
+      'message' => Markup::create($body),
+    ];
+
+    $langcode = $account->getPreferredLangcode();
+    $send = TRUE;
+
+    $result = $mailManager->mail('quiz_notifications', 'quiz_pass', $to, $langcode, $params, NULL, $send);
+
+    if (!empty($result['result'])) {
+      \Drupal::logger('quiz_notifications')->notice(
+        'Sent quiz notification to @mail for quiz @qid (user @uid).',
+        ['@mail' => $to, '@qid' => $completed_quiz_id, '@uid' => $account->id()]
+      );
+    } else {
+      \Drupal::logger('quiz_notifications')->error(
+        'Failed sending quiz notification to @mail for quiz @qid (user @uid).',
+        ['@mail' => $to, '@qid' => $completed_quiz_id, '@uid' => $account->id()]
+      );
+    }
+  }
+}

@@ -1,0 +1,5 @@
+quiz_notifications:
+  quiz_pass:
+    subject: '[Quiz Notification] {{ subject }}'
+    body:
+      - '{{ message }}'
