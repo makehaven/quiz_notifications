@@ -78,7 +78,7 @@ class SettingsForm extends ConfigFormBase {
       $form['rules'][$i]['body'] = [
         '#type' => 'textarea',
         '#title' => $this->t('Email Body'),
-        '#default_value' => $rule['body'] ?? '',
+        '#default_value' => isset($rule['body']) && is_array($rule['body']) ? $rule['body']['value'] : ($rule['body'] ?? ''),
         '#required' => TRUE,
       ];
       $form['rules'][$i]['remove_rule'] = [
