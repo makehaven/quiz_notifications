@@ -73,12 +73,13 @@ class SettingsForm extends ConfigFormBase {
         '#title' => $this->t('Email Subject'),
         '#default_value' => $rule['subject'] ?? '',
         '#maxlength' => 255,
+        '#required' => TRUE,
       ];
       $form['rules'][$i]['body'] = [
-        '#type' => 'text_format',
+        '#type' => 'textarea',
         '#title' => $this->t('Email Body'),
-        '#format' => $rule['body']['format'] ?? 'basic_html',
-        '#default_value' => $rule['body']['value'] ?? '',
+        '#default_value' => $rule['body'] ?? '',
+        '#required' => TRUE,
       ];
       $form['rules'][$i]['remove_rule'] = [
         '#type' => 'submit',

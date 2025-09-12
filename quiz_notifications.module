@@ -70,7 +70,7 @@ function quiz_notifications_entity_create(EntityInterface $entity) {
 
   foreach ($matched as $rule) {
     $subject_raw = $rule['subject'] ?? '';
-    $body_raw = $rule['body']['value'] ?? '';
+    $body_raw = $rule['body'] ?? '';
 
     $subject = $token->replace($subject_raw, $token_data);
     $body = $token->replace($body_raw, $token_data);
@@ -85,8 +85,7 @@ function quiz_notifications_entity_create(EntityInterface $entity) {
 
     $params = [
       'subject' => $subject,
-      // Allow simple HTML (same as most Drupal mails).
-      'message' => Markup::create($body),
+      'message' => $body,
     ];
 
     $langcode = $account->getPreferredLangcode();
