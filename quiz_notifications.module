@@ -5,25 +5,28 @@ use Drupal\Core\Mail\MailManagerInterface;
 use Drupal\Core\Render\Markup;
 
 /**
- * Implements hook_entity_insert().
- *
- * Fires when a quiz result is saved for the first time.
+ * Implements hook_entity_create().
  */
-function quiz_notifications_entity_insert(EntityInterface $entity) {
+function quiz_notifications_entity_create(EntityInterface $entity) {
   // Only handle quiz results.
   if ($entity->getEntityTypeId() !== 'quiz_result') {
     return;
   }
 
+  // We only care about 100% scores.
+  if (method_exists($entity, 'getScore') && $entity->getScore() != 100) {
+    return;
+  }
+
   // Defensive: make sure we can get the quiz and user.
-  if (!method_exists($entity, 'getQuiz') || !method_exists($entity, 'getUser')) {
+  if (!method_exists($entity, 'getQuiz') || !method_exists($entity, 'getOwner')) {
     \Drupal::logger('quiz_notifications')->error('quiz_result entity missing expected methods.');
     return;
   }
 
   // Identify the completed quiz and user.
   $quiz = $entity->getQuiz();
-  $user = $entity->getUser();
+  $user = $entity->getOwner();
 
   if (!$quiz || !$user) {
     \Drupal::logger('quiz_notifications')->warning('Missing quiz or user on quiz_result insert.');
