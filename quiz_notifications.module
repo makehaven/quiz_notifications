@@ -1,7 +1,17 @@
 <?php
 
+/**
+ * @file
+ * MakeHaven's behaviour on top of the Quiz module: pass notifications, and
+ * taking-flow refinements.
+ */
+
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Render\Markup;
+use Drupal\Core\Url;
+use Drupal\quiz\Entity\Quiz;
+use Drupal\quiz\Entity\QuizResult;
 
 /**
  * Implements hook_mail().
@@ -105,4 +115,119 @@ function quiz_notifications_entity_insert(EntityInterface $entity) {
       ]);
     }
   }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter() for quiz_question_answering_form.
+ *
+ * Skips the post-question feedback page when there is nothing to explain.
+ *
+ * The Quiz module treats "show feedback after the question" as all-or-nothing:
+ * enable it and every answer, right or wrong, is followed by its own page whose
+ * only control is "Next question". On the New Member Quiz that doubles the
+ * clicks to finish, and because that quiz also repeats until correct, a wrong
+ * answer never reaches the feedback page at all — Quiz catches it in validation
+ * and explains it inline on the question itself. So the feedback page a member
+ * actually sees is always the one confirming they were right.
+ *
+ * We let Quiz queue the feedback page as usual, then take it back out of the
+ * way when the whole page was answered correctly.
+ */
+function quiz_notifications_form_quiz_question_answering_form_alter(array &$form, FormStateInterface $form_state) {
+  // Appended here rather than on the button so that it lands after Quiz's own
+  // '::submitForm' (queued in FormBuilder::prepareForm, before this alter runs)
+  // — that handler is what scores the answers and sets the redirect we may
+  // override. The Back and Skip buttons carry their own '#submit' and so never
+  // reach the feedback page or this handler.
+  $form['#submit'][] = 'quiz_notifications_skip_correct_feedback';
+}
+
+/**
+ * Submit handler: bypasses the feedback page when the page was fully correct.
+ *
+ * @param array $form
+ *   The answering form.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   The form state, already processed by the Quiz module's submit handler.
+ */
+function quiz_notifications_skip_correct_feedback(array &$form, FormStateInterface $form_state) {
+  $redirect = $form_state->getRedirect();
+  if (!$redirect instanceof Url || $redirect->getRouteName() !== 'quiz.question.feedback') {
+    // This quiz shows no per-question feedback, or the answer was skipped or
+    // submitted too late. Either way there is no interstitial to remove.
+    return;
+  }
+
+  $quiz = $form['#quiz'] ?? NULL;
+  $quiz_result = $form['#quiz_result'] ?? NULL;
+  if (!$quiz instanceof Quiz || !$quiz_result instanceof QuizResult) {
+    return;
+  }
+
+  if (!quiz_notifications_page_all_correct($form_state, $quiz_result)) {
+    // Something on this page was wrong, unanswered or awaiting manual grading.
+    // The feedback page is the whole point in that case, so leave it alone.
+    return;
+  }
+
+  if (!$quiz_result->get('time_end')->isEmpty()) {
+    // That was the last question and Quiz has already finalized the result, so
+    // go straight to the score rather than to a feedback page whose only
+    // control is "Finish".
+    $form_state->setRedirect('entity.quiz_result.canonical', [
+      'quiz' => $quiz->id(),
+      'quiz_result' => $quiz_result->id(),
+    ]);
+    return;
+  }
+
+  // Mid-quiz: carry on to the question Quiz had already advanced the session to
+  // before it diverted us to feedback.
+  $form_state->setRedirect('quiz.question.take', [
+    'quiz' => $quiz->id(),
+    'question_number' => \Drupal::service('quiz.session')->getCurrentQuestion($quiz),
+  ]);
+}
+
+/**
+ * Reports whether every graded answer submitted on this page scored correct.
+ *
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   The submitted form state.
+ * @param \Drupal\quiz\Entity\QuizResult $quiz_result
+ *   The result the answers were recorded against.
+ *
+ * @return bool
+ *   TRUE when at least one graded question was submitted and all of them are
+ *   marked correct. FALSE if any is wrong, unevaluated, or if the page carried
+ *   no graded question at all.
+ */
+function quiz_notifications_page_all_correct(FormStateInterface $form_state, QuizResult $quiz_result) {
+  $submitted = $form_state->getValue('question');
+  if (!is_array($submitted) || $submitted === []) {
+    return FALSE;
+  }
+
+  $graded = 0;
+  foreach ($quiz_result->getLayout() as $quiz_result_answer) {
+    $question_id = $quiz_result_answer->get('question_id')->getString();
+    if (!isset($submitted[$question_id])) {
+      // Belongs to another page of this quiz.
+      continue;
+    }
+
+    $question = $quiz_result_answer->getQuizQuestion();
+    if ($question === NULL || !$question->isQuestion()) {
+      // Directions and other prose carry no correctness to report.
+      continue;
+    }
+
+    $graded++;
+    // Quiz's own submit handler has already scored and saved this.
+    if (!$quiz_result_answer->get('is_correct')->getString()) {
+      return FALSE;
+    }
+  }
+
+  return $graded > 0;
 }

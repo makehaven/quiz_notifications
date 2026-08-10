@@ -1,6 +1,6 @@
 name: Quiz Notifications
 type: module
-description: 'Provides a configuration page to send custom emails when quizzes are passed with 100%.'
+description: 'MakeHaven behaviour on top of the Quiz module: custom emails when a quiz is passed with 100%, and a taking flow that only stops for feedback when an answer was wrong.'
 package: Makerspace
 core_version_requirement: ^10 || ^11
 dependencies:
